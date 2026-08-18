@@ -19,8 +19,8 @@
         <a-button v-if="tripPlan && !editMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
         </a-button>
-        <a-button v-else @click="saveChanges" type="primary">
-          💾 保存修改
+        <a-button v-else @click="saveChanges" type="primary" :loading="savingDraft">
+          💾 保存并重新评估
         </a-button>
         <a-button v-if="editMode" @click="cancelEdit" type="default">
           ❌ 取消编辑
@@ -141,8 +141,8 @@
                 v-if="isLocalDraft"
                 type="warning"
                 show-icon
-                message="当前为本地编辑草稿"
-                description="上方质量信息来自原始生成结果；本地修改尚未提交后端重新校验。"
+                message="当前为未确认的编辑草稿"
+                description="上方正式质量信息仍来自当前确认版本；草稿只有确认后才会应用。"
                 class="execution-alert"
               />
               <a-alert
@@ -406,6 +406,77 @@
       <a-button type="primary" @click="goBack">返回首页创建行程</a-button>
     </a-empty>
 
+    <a-drawer
+      title="行程重新评估对比"
+      :open="evaluationOpen"
+      width="620"
+      :closable="false"
+    >
+      <template v-if="draftEvaluation">
+        <a-alert
+          :type="draftEvaluation.after.accepted ? 'success' : 'warning'"
+          show-icon
+          :message="draftEvaluation.after.accepted ? '候选版本达到交付标准' : '候选版本仍存在阻断问题'"
+          description="当前仅为候选版本；点击确认后才会更新正式行程。"
+          style="margin-bottom: 16px"
+        />
+        <a-row :gutter="12">
+          <a-col :span="12">
+            <a-card size="small" title="重新评估前">
+              <a-statistic title="综合质量分" :value="draftEvaluation.before.quality_score ?? 0" :precision="1" />
+              <p>路线分：{{ draftEvaluation.before.route_score ?? '-' }}</p>
+              <p>日程分：{{ draftEvaluation.before.schedule_score ?? '-' }}</p>
+              <p>约束错误：{{ draftEvaluation.before.constraint_errors }}</p>
+            </a-card>
+          </a-col>
+          <a-col :span="12">
+            <a-card size="small" title="重新评估后">
+              <a-statistic title="综合质量分" :value="draftEvaluation.after.quality_score ?? 0" :precision="1" />
+              <p>路线分：{{ draftEvaluation.after.route_score ?? '-' }}</p>
+              <p>日程分：{{ draftEvaluation.after.schedule_score ?? '-' }}</p>
+              <p>约束错误：{{ draftEvaluation.after.constraint_errors }}</p>
+            </a-card>
+          </a-col>
+        </a-row>
+        <a-descriptions bordered size="small" :column="2" style="margin-top: 16px">
+          <a-descriptions-item label="变化天数">
+            {{ draftEvaluation.diff.changed_days.map((item) => item + 1).join('、') || '无' }}
+          </a-descriptions-item>
+          <a-descriptions-item label="受影响路线">
+            {{ draftEvaluation.diff.queried_route_legs }} 段
+          </a-descriptions-item>
+          <a-descriptions-item label="复用路线">
+            {{ draftEvaluation.diff.reused_route_legs }} 段
+          </a-descriptions-item>
+          <a-descriptions-item label="日程超时">
+            {{ draftEvaluation.before.schedule_overtime_minutes }} → {{ draftEvaluation.after.schedule_overtime_minutes }} 分钟
+          </a-descriptions-item>
+          <a-descriptions-item label="过长通勤">
+            {{ draftEvaluation.before.excessive_commute_segments }} → {{ draftEvaluation.after.excessive_commute_segments }} 段
+          </a-descriptions-item>
+          <a-descriptions-item label="不可用路线">
+            {{ draftEvaluation.before.unavailable_route_legs }} → {{ draftEvaluation.after.unavailable_route_legs }} 段
+          </a-descriptions-item>
+        </a-descriptions>
+        <a-alert
+          v-if="draftEvaluation.after.blocking_reasons.length"
+          type="error"
+          show-icon
+          message="仍需处理的问题"
+          :description="draftEvaluation.after.blocking_reasons.join('；')"
+          style="margin-top: 16px"
+        />
+      </template>
+      <template #footer>
+        <a-space style="float: right">
+          <a-button @click="continueEditingDraft">继续修改</a-button>
+          <a-button type="primary" :loading="confirmingDraft" @click="confirmEvaluatedDraft">
+            确认并应用新版本
+          </a-button>
+        </a-space>
+      </template>
+    </a-drawer>
+
     <SessionDetailDrawer
       :open="detailOpen"
       :loading="loadingDetail"
@@ -434,8 +505,26 @@ import SessionDetailDrawer from '@/components/SessionDetailDrawer.vue'
 import RouteSegments from '@/components/execution/RouteSegments.vue'
 import DayTimeline from '@/components/execution/DayTimeline.vue'
 import ExecutionQualityPanel from '@/components/execution/ExecutionQualityPanel.vue'
-import { getAttractionPhoto, getTripExecutionView, getTripSession, resumeTripSession } from '@/services/api'
-import type { AgentState, Attraction, QualityLevel, TripExecutionView, TripPlan, TripPlanResponse } from '@/types'
+import {
+  confirmTripDraft,
+  createTripDraft,
+  evaluateTripDraft,
+  getAttractionPhoto,
+  getTripExecutionView,
+  getTripSession,
+  resumeTripSession,
+  updateTripDraft
+} from '@/services/api'
+import type {
+  AgentState,
+  Attraction,
+  DraftEvaluationResponse,
+  QualityLevel,
+  TripDraft,
+  TripExecutionView,
+  TripPlan,
+  TripPlanResponse
+} from '@/types'
 
 
 const route = useRoute()
@@ -450,6 +539,11 @@ const resuming = ref(false)
 const detailOpen = ref(false)
 const loadSource = ref<'server' | 'cache' | null>(null)
 const editMode = ref(false)
+const savingDraft = ref(false)
+const confirmingDraft = ref(false)
+const evaluationOpen = ref(false)
+const currentDraft = ref<TripDraft | null>(null)
+const draftEvaluation = ref<DraftEvaluationResponse | null>(null)
 const isLocalDraft = ref(sessionStorage.getItem('tripPlanLocalDraft') === 'true')
 const originalPlan = ref<TripPlan | null>(null)
 const attractionPhotos = ref<Record<string, string>>({})
@@ -615,32 +709,63 @@ const toggleEditMode = () => {
   editMode.value = true
   // 保存原始数据用于取消编辑
   originalPlan.value = JSON.parse(JSON.stringify(tripPlan.value))
+  isLocalDraft.value = true
   message.info('进入编辑模式')
 }
 
-// 保存修改
-const saveChanges = () => {
-  editMode.value = false
-  // 更新sessionStorage
-  if (tripPlan.value) {
-    sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
-    if (tripPlanResponse.value) {
-      tripPlanResponse.value.data = tripPlan.value
-      sessionStorage.setItem('tripPlanResponse', JSON.stringify(tripPlanResponse.value))
-    }
-    // 本地编辑后，原质量评分只代表生成时结果，不能视为已重新校验。
+// 保存后立即执行增量路线查询和全套确定性重新评估。
+const saveChanges = async () => {
+  if (!tripPlan.value || !sessionId.value) return
+  savingDraft.value = true
+  try {
+    currentDraft.value = currentDraft.value
+      ? await updateTripDraft(sessionId.value, currentDraft.value.draft_id, tripPlan.value)
+      : await createTripDraft(sessionId.value, tripPlan.value)
+    draftEvaluation.value = await evaluateTripDraft(
+      sessionId.value,
+      currentDraft.value.draft_id
+    )
+    currentDraft.value = draftEvaluation.value.draft
+    tripPlan.value = draftEvaluation.value.candidate_version.trip_plan
+    editMode.value = false
     isLocalDraft.value = true
-    sessionStorage.setItem('tripPlanLocalDraft', 'true')
+    sessionStorage.removeItem('tripPlanLocalDraft')
+    evaluationOpen.value = true
+    await renderCurrentPlan()
+    message.success('草稿已重新评估，请确认新版本或继续修改')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '草稿重新评估失败')
+  } finally {
+    savingDraft.value = false
   }
-  message.success('修改已保存为本地草稿，尚未重新校验')
+}
 
-  // 重新初始化地图以反映更改
-  if (map) {
-    map.destroy()
+// 接受重新评估后的候选版本，并重新读取轻量 execution-view。
+const confirmEvaluatedDraft = async () => {
+  if (!currentDraft.value || !sessionId.value) return
+  confirmingDraft.value = true
+  try {
+    await confirmTripDraft(sessionId.value, currentDraft.value.draft_id)
+    evaluationOpen.value = false
+    currentDraft.value = null
+    draftEvaluation.value = null
+    originalPlan.value = null
+    await loadSession()
+    message.success('新版本已确认并应用')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '确认新版本失败')
+  } finally {
+    confirmingDraft.value = false
   }
-  nextTick(() => {
-    initMap()
-  })
+}
+
+// 不确认候选版本，保留同一草稿继续修改；后端会在下次保存时废弃旧候选。
+const continueEditingDraft = () => {
+  evaluationOpen.value = false
+  originalPlan.value = JSON.parse(JSON.stringify(tripPlan.value))
+  editMode.value = true
+  isLocalDraft.value = true
+  message.info('已返回草稿编辑，新版本尚未应用')
 }
 
 // 取消编辑
@@ -649,6 +774,7 @@ const cancelEdit = () => {
     tripPlan.value = JSON.parse(JSON.stringify(originalPlan.value))
   }
   editMode.value = false
+  isLocalDraft.value = Boolean(currentDraft.value)
   message.info('已取消编辑')
 }
 

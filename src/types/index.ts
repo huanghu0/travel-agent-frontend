@@ -436,3 +436,79 @@ export interface AgentState {
   [key: string]: unknown
 }
 
+
+
+/** 行程编辑草稿与版本接口契约。 */
+export interface TripPlanDiff {
+  changed_fields: string[]
+  changed_days: number[]
+  changed_attractions: string[]
+  changed_hotels: number[]
+  changed_meals: number[]
+  affected_route_keys: string[]
+  reused_route_legs: number
+  queried_route_legs: number
+}
+
+export interface VersionQualitySnapshot {
+  version_number: number
+  quality_score?: number | null
+  quality_level?: QualityLevel | null
+  accepted: boolean
+  route_score?: number | null
+  schedule_score?: number | null
+  unavailable_route_legs: number
+  schedule_overtime_minutes: number
+  excessive_commute_segments: number
+  constraint_errors: number
+  validation_errors: number
+  warnings: string[]
+  blocking_reasons: string[]
+}
+
+export type TripDraftStatus = 'editing' | 'evaluated' | 'confirmed' | 'superseded'
+export type TripPlanVersionStatus = 'candidate' | 'confirmed' | 'superseded'
+
+export interface TripDraft {
+  draft_id: string
+  session_id: string
+  base_version: number
+  status: TripDraftStatus
+  trip_plan: TripPlan
+  diff?: TripPlanDiff | null
+  candidate_version_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TripPlanVersion {
+  version_id: string
+  session_id: string
+  version_number: number
+  status: TripPlanVersionStatus
+  source: 'original' | 'draft'
+  source_draft_id?: string | null
+  trip_plan: TripPlan
+  evaluation: {
+    acceptance_report: PartialAcceptanceReport
+    route_quality_report: RouteQualityReport
+    schedule_quality_report: ScheduleQualityReport
+    commute_report: CommuteConstraintReport
+    constraint_report: TripConstraintReport
+  }
+  created_at: string
+  confirmed_at?: string | null
+}
+
+export interface DraftEvaluationResponse {
+  draft: TripDraft
+  candidate_version: TripPlanVersion
+  before: VersionQualitySnapshot
+  after: VersionQualitySnapshot
+  diff: TripPlanDiff
+}
+
+export interface ConfirmDraftResponse {
+  draft: TripDraft
+  confirmed_version: TripPlanVersion
+}

@@ -3,10 +3,15 @@ import type {
   AgentSessionSummary,
   AgentState,
   AgentStatus,
+  ConfirmDraftResponse,
+  DraftEvaluationResponse,
   HealthCheckResponse,
   PoiPhotoResponse,
   TripExecutionView,
+  TripDraft,
   TripFormData,
+  TripPlan,
+  TripPlanVersion,
   TripPlanResponse
 } from '@/types'
 
@@ -135,6 +140,77 @@ export async function resumeTripSession(sessionId: string): Promise<AgentState> 
   } catch (error: unknown) {
     console.error(`恢复会话 ${sessionId} 失败:`, error)
     throw new Error(getErrorMessage(error, '恢复旅行规划失败'))
+  }
+}
+
+
+/** 以当前确认版本为基线创建可重复编辑的服务端草稿。 */
+export async function createTripDraft(sessionId: string, tripPlan: TripPlan): Promise<TripDraft> {
+  try {
+    const response = await apiClient.post<TripDraft>(`/api/trip/sessions/${sessionId}/drafts`, {
+      trip_plan: tripPlan
+    })
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '创建行程草稿失败'))
+  }
+}
+
+/** 更新草稿时后端会废弃上一次尚未确认的候选版本。 */
+export async function updateTripDraft(
+  sessionId: string,
+  draftId: string,
+  tripPlan: TripPlan
+): Promise<TripDraft> {
+  try {
+    const response = await apiClient.put<TripDraft>(
+      `/api/trip/sessions/${sessionId}/drafts/${draftId}`,
+      { trip_plan: tripPlan }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '更新行程草稿失败'))
+  }
+}
+
+/** 触发增量路线查询和全套确定性重新评估。 */
+export async function evaluateTripDraft(
+  sessionId: string,
+  draftId: string
+): Promise<DraftEvaluationResponse> {
+  try {
+    const response = await apiClient.post<DraftEvaluationResponse>(
+      `/api/trip/sessions/${sessionId}/drafts/${draftId}/evaluate`
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '重新评估行程草稿失败'))
+  }
+}
+
+/** 用户确认后，候选版本才会覆盖 execution-view 当前展示版本。 */
+export async function confirmTripDraft(
+  sessionId: string,
+  draftId: string
+): Promise<ConfirmDraftResponse> {
+  try {
+    const response = await apiClient.post<ConfirmDraftResponse>(
+      `/api/trip/sessions/${sessionId}/drafts/${draftId}/confirm`
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '确认新行程版本失败'))
+  }
+}
+
+export async function listTripPlanVersions(sessionId: string): Promise<TripPlanVersion[]> {
+  try {
+    const response = await apiClient.get<TripPlanVersion[]>(
+      `/api/trip/sessions/${sessionId}/versions`
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '查询行程版本失败'))
   }
 }
 
