@@ -6,6 +6,7 @@ import App from './App.vue'
 import Home from './views/Home.vue'
 import Result from './views/Result.vue'
 import History from './views/History.vue'
+import Planning from './views/Planning.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -14,6 +15,11 @@ const router = createRouter({
       path: '/',
       name: 'Home',
       component: Home
+    },
+    {
+      path: '/planning/:taskId',
+      name: 'Planning',
+      component: Planning
     },
     {
       path: '/result/:sessionId',

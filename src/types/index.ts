@@ -138,6 +138,7 @@ export type AgentStatus =
   | 'max_steps_reached'
   | 'budget_exhausted'
   | 'convergence_stopped'
+  | 'cancelled'
 
 export type RouteMode = 'walking' | 'driving' | 'transit'
 export type RouteLegType = 'hotel_departure' | 'between_attractions' | 'hotel_return'
@@ -511,4 +512,87 @@ export interface DraftEvaluationResponse {
 export interface ConfirmDraftResponse {
   draft: TripDraft
   confirmed_version: TripPlanVersion
+}
+
+/** 阶段五：异步旅行规划任务、结构化故障和 SSE 事件契约。 */
+export type TripTaskStatus =
+  | 'queued'
+  | 'running'
+  | 'retrying'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'timed_out'
+
+export interface TaskFailureReport {
+  code: string
+  message: string
+  stage: string
+  stage_name: string
+  action?: string | null
+  retryable: boolean
+  provider_code?: string | null
+  provider_message?: string | null
+  session_id: string
+  current_step: number
+  max_steps: number
+  exception_type: string
+  occurred_at: string
+  details: Record<string, unknown>
+}
+
+export interface TripPlanningTask {
+  task_id: string
+  session_id: string
+  idempotency_key: string
+  request_fingerprint: string
+  request: TripFormData
+  status: TripTaskStatus
+  current_stage: string
+  stage_name: string
+  current_action?: string | null
+  progress_percent: number
+  current_step: number
+  max_steps: number
+  attempt: number
+  recovery_count: number
+  message: string
+  cancel_requested: boolean
+  worker_id?: string | null
+  lease_expires_at?: string | null
+  heartbeat_at?: string | null
+  result_session_id?: string | null
+  failure_report?: TaskFailureReport | null
+  created_at: string
+  started_at?: string | null
+  updated_at: string
+  finished_at?: string | null
+}
+
+export interface TripTaskCreateResponse {
+  task_id: string
+  session_id: string
+  status: TripTaskStatus
+  created_at: string
+  reused: boolean
+}
+
+export interface TripTaskCancelResponse {
+  task_id: string
+  status: TripTaskStatus
+  cancel_requested: boolean
+  message: string
+}
+
+export interface TripTaskEvent {
+  event_id: number
+  task_id: string
+  event_type: string
+  stage: string
+  stage_name: string
+  progress_percent: number
+  current_step: number
+  message: string
+  data: Record<string, unknown>
+  created_at: string
 }

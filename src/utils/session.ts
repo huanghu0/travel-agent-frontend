@@ -12,7 +12,8 @@ const statusLabels: Record<AgentStatus, string> = {
   failed: '执行失败',
   max_steps_reached: '达到步骤上限',
   budget_exhausted: '执行预算耗尽',
-  convergence_stopped: '收敛终止'
+  convergence_stopped: '收敛终止',
+  cancelled: '已取消'
 }
 
 const statusColors: Record<AgentStatus, string> = {
@@ -22,7 +23,8 @@ const statusColors: Record<AgentStatus, string> = {
   failed: 'error',
   max_steps_reached: 'warning',
   budget_exhausted: 'volcano',
-  convergence_stopped: 'orange'
+  convergence_stopped: 'orange',
+  cancelled: 'default'
 }
 
 const actionLabels: Record<string, string> = {
@@ -74,7 +76,7 @@ export function formatSessionDate(value?: string | null): string {
 }
 
 export function canResumeSession(status: AgentStatus): boolean {
-  return status !== 'completed'
+  return status !== 'completed' && status !== 'cancelled'
 }
 
 /** 将完整 AgentState 投影为结果页使用的公开响应结构。 */

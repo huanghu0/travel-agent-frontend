@@ -12,7 +12,10 @@ import type {
   TripFormData,
   TripPlan,
   TripPlanVersion,
-  TripPlanResponse
+  TripPlanResponse,
+  TripPlanningTask,
+  TripTaskCancelResponse,
+  TripTaskCreateResponse
 } from '@/types'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -215,3 +218,55 @@ export async function listTripPlanVersions(sessionId: string): Promise<TripPlanV
 }
 
 export default apiClient
+
+
+/** 创建持久化异步任务。幂等键在网络重试时必须复用。 */
+export async function createTripTask(
+  formData: TripFormData,
+  idempotencyKey: string
+): Promise<TripTaskCreateResponse> {
+  try {
+    const response = await apiClient.post<TripTaskCreateResponse>('/api/trip/tasks', formData, {
+      headers: { 'Idempotency-Key': idempotencyKey },
+      timeout: 15000
+    })
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '创建旅行规划任务失败'))
+  }
+}
+
+/** 页面刷新、SSE 断线或浏览器重新打开后，重新获取持久化任务快照。 */
+export async function getTripTask(taskId: string): Promise<TripPlanningTask> {
+  try {
+    const response = await apiClient.get<TripPlanningTask>(`/api/trip/tasks/${taskId}`, {
+      timeout: 15000
+    })
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '查询旅行规划任务失败'))
+  }
+}
+
+/** 取消排队中或执行中的任务。 */
+export async function cancelTripTask(taskId: string): Promise<TripTaskCancelResponse> {
+  try {
+    const response = await apiClient.post<TripTaskCancelResponse>(
+      `/api/trip/tasks/${taskId}/cancel`,
+      undefined,
+      { timeout: 15000 }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '取消旅行规划任务失败'))
+  }
+}
+
+/** EventSource 使用绝对地址；after_event_id 支持手动重连时继续消费。 */
+export function getTripTaskEventsUrl(taskId: string, afterEventId = 0): string {
+  const url = new URL(`/api/trip/tasks/${taskId}/events`, API_BASE_URL)
+  if (afterEventId > 0) {
+    url.searchParams.set('after_event_id', String(afterEventId))
+  }
+  return url.toString()
+}

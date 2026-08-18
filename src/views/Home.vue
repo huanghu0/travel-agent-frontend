@@ -207,10 +207,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, watch } from 'vue'
+import { reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import { generateTripPlan } from '@/services/api'
+import { createTripTask } from '@/services/api'
 import type { TripFormData } from '@/types'
 import type { Dayjs } from 'dayjs'
 
@@ -218,6 +218,8 @@ const router = useRouter()
 const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
+// 网络失败后保留同一个幂等键，用户重试不会创建第二个后台任务。
+const pendingIdempotencyKey = ref<string | null>(null)
 
 type TripFormState = Omit<TripFormData, 'start_date' | 'end_date'> & {
   start_date: Dayjs | null
@@ -235,7 +237,6 @@ const formData = reactive<TripFormState>({
   free_text_input: ''
 })
 
-// 监听日期变化,自动计算旅行天数
 watch([() => formData.start_date, () => formData.end_date], ([start, end]) => {
   if (start && end) {
     const days = end.diff(start, 'day') + 1
@@ -252,32 +253,15 @@ watch([() => formData.start_date, () => formData.end_date], ([start, end]) => {
 })
 
 const handleSubmit = async () => {
+  if (loading.value) return
   if (!formData.start_date || !formData.end_date) {
     message.error('请选择日期')
     return
   }
 
   loading.value = true
-  loadingProgress.value = 0
-  loadingStatus.value = '正在初始化...'
-
-  // 模拟进度更新
-  const progressInterval = setInterval(() => {
-    if (loadingProgress.value < 90) {
-      loadingProgress.value += 10
-
-      // 更新状态文本
-      if (loadingProgress.value <= 30) {
-        loadingStatus.value = '🔍 正在搜索景点...'
-      } else if (loadingProgress.value <= 50) {
-        loadingStatus.value = '🌤️ 正在查询天气...'
-      } else if (loadingProgress.value <= 70) {
-        loadingStatus.value = '🏨 正在推荐酒店...'
-      } else {
-        loadingStatus.value = '📋 正在生成行程计划...'
-      }
-    }
-  }, 500)
+  loadingProgress.value = 35
+  loadingStatus.value = '正在创建可恢复的后台任务...'
 
   try {
     const requestData: TripFormData = {
@@ -290,43 +274,20 @@ const handleSubmit = async () => {
       preferences: formData.preferences,
       free_text_input: formData.free_text_input
     }
+    pendingIdempotencyKey.value ||= crypto.randomUUID()
+    const task = await createTripTask(requestData, pendingIdempotencyKey.value)
 
-    const response = await generateTripPlan(requestData)
-
-    clearInterval(progressInterval)
     loadingProgress.value = 100
-    loadingStatus.value = '✅ 完成!'
-
-    if (response.success && response.data) {
-      // 保存完整响应，保留 session_id、质量评分、完成模式和警告。
-      sessionStorage.setItem('tripPlanResponse', JSON.stringify(response))
-      // 同时保留旧键，兼容已有结果页缓存。
-      sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
-      sessionStorage.removeItem('tripPlanLocalDraft')
-
-      if (!response.session_id) {
-        message.error('后端未返回会话 ID，无法建立可恢复的行程会话')
-        return
-      }
-
-      message.success('旅行计划生成成功!')
-
-      // 结果页以服务端 session_id 为唯一地址，刷新后可从 SQLite 恢复。
-      setTimeout(() => {
-        router.push({ name: 'Result', params: { sessionId: response.session_id } })
-      }, 500)
-    } else {
-      message.error(response.message || '生成失败')
-    }
-  } catch (error: any) {
-    clearInterval(progressInterval)
-    message.error(error.message || '生成旅行计划失败,请稍后重试')
+    loadingStatus.value = task.reused ? '已恢复现有任务' : '后台任务已创建'
+    pendingIdempotencyKey.value = null
+    await router.push({ name: 'Planning', params: { taskId: task.task_id } })
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : '创建旅行规划任务失败'
+    message.error(detail)
   } finally {
-    setTimeout(() => {
-      loading.value = false
-      loadingProgress.value = 0
-      loadingStatus.value = ''
-    }, 1000)
+    loading.value = false
+    loadingProgress.value = 0
+    loadingStatus.value = ''
   }
 }
 </script>
@@ -675,4 +636,3 @@ const handleSubmit = async () => {
   }
 }
 </style>
-
