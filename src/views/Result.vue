@@ -6,7 +6,17 @@
         ← 返回首页
       </a-button>
       <a-space size="middle">
-        <a-button v-if="!editMode" @click="toggleEditMode" type="default">
+        <a-button @click="goHistory">🗂️ 历史行程</a-button>
+        <a-button v-if="sessionId" :loading="loadingDetail" @click="openSessionDetail">🔎 执行详情</a-button>
+        <a-button
+          v-if="canResume"
+          type="primary"
+          :loading="resuming"
+          @click="handleResume"
+        >
+          ▶️ 恢复执行
+        </a-button>
+        <a-button v-if="tripPlan && !editMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
         </a-button>
         <a-button v-else @click="saveChanges" type="primary">
@@ -17,7 +27,7 @@
         </a-button>
 
         <!-- 导出按钮 -->
-        <a-dropdown v-if="!editMode">
+        <a-dropdown v-if="tripPlan && !editMode">
           <template #overlay>
             <a-menu>
               <a-menu-item key="image" @click="exportAsImage">
@@ -35,7 +45,20 @@
       </a-space>
     </div>
 
-    <div v-if="tripPlan" class="content-wrapper">
+    <a-card v-if="loadingSession" :bordered="false" class="session-loading-card">
+      <a-skeleton active :paragraph="{ rows: 6 }" />
+    </a-card>
+
+    <a-alert
+      v-if="loadSource === 'cache'"
+      type="warning"
+      show-icon
+      message="服务端会话暂时不可用，当前展示浏览器缓存"
+      description="缓存仅用于故障回退；刷新后系统仍会优先从 SQLite 会话加载。"
+      class="cache-alert"
+    />
+
+    <div v-if="tripPlan && !loadingSession" class="content-wrapper">
       <!-- 侧边导航 -->
       <div class="side-nav">
         <a-affix :offset-top="80">
@@ -47,7 +70,16 @@
               <span>💰 预算明细</span>
             </a-menu-item>
             <a-menu-item key="map">
-              <span>📍 景点地图</span>
+              <span>📍 地点地图</span>
+            </a-menu-item>
+            <a-menu-item v-if="executionView" key="execution-routes">
+              <span>🧭 真实路线</span>
+            </a-menu-item>
+            <a-menu-item v-if="executionView" key="execution-timeline">
+              <span>⏱️ 地点时间轴</span>
+            </a-menu-item>
+            <a-menu-item v-if="executionView" key="execution-quality">
+              <span>🧪 约束报告</span>
             </a-menu-item>
             <a-sub-menu key="days" title="📅 每日行程">
               <a-menu-item v-for="(day, index) in tripPlan.days" :key="`day-${index}`">
@@ -81,6 +113,53 @@
               </div>
             </a-card>
 
+            <!-- 后端 Agent 执行与质量摘要：完整响应契约中的元数据。 -->
+            <a-card
+              v-if="hasExecutionMetadata"
+              title="🤖 执行与质量"
+              :bordered="false"
+              class="execution-card"
+            >
+              <div class="execution-tags">
+                <a-tag v-if="tripPlanResponse?.completion_mode" :color="tripPlanResponse.completion_mode === 'full' ? 'success' : 'warning'">
+                  {{ tripPlanResponse.completion_mode === 'full' ? '完整完成' : '部分可接受' }}
+                </a-tag>
+                <a-tag v-if="tripPlanResponse?.quality_level" :color="getQualityColor(tripPlanResponse.quality_level)">
+                  {{ getQualityLabel(tripPlanResponse.quality_level) }}
+                </a-tag>
+                <a-tag v-if="tripPlanResponse?.quality_score != null" color="blue">
+                  质量分 {{ tripPlanResponse.quality_score.toFixed(1) }}
+                </a-tag>
+                <a-tag v-if="tripPlanResponse?.execution_steps != null">
+                  执行 {{ tripPlanResponse.execution_steps }} 步
+                </a-tag>
+              </div>
+              <div v-if="tripPlanResponse?.session_id" class="session-id">
+                会话 ID：{{ tripPlanResponse.session_id }}
+              </div>
+              <a-alert
+                v-if="isLocalDraft"
+                type="warning"
+                show-icon
+                message="当前为本地编辑草稿"
+                description="上方质量信息来自原始生成结果；本地修改尚未提交后端重新校验。"
+                class="execution-alert"
+              />
+              <a-alert
+                v-if="tripPlanResponse?.warnings?.length"
+                type="warning"
+                show-icon
+                message="仍需注意"
+                class="execution-alert"
+              >
+                <template #description>
+                  <ul class="warning-list">
+                    <li v-for="warning in tripPlanResponse.warnings" :key="warning">{{ warning }}</li>
+                  </ul>
+                </template>
+              </a-alert>
+            </a-card>
+
             <!-- 预算明细 -->
             <a-card id="budget" v-if="tripPlan.budget" title="💰 预算明细" :bordered="false" class="budget-card">
               <div class="budget-grid">
@@ -110,11 +189,32 @@
 
           <!-- 右侧:地图 -->
           <div class="right-map">
-            <a-card id="map" title="📍 景点地图" :bordered="false" class="map-card">
-              <div id="amap-container" style="width: 100%; height: 100%"></div>
+            <a-card id="map" title="📍 地点分布地图" :bordered="false" class="map-card">
+              <div class="map-content">
+                <div id="amap-container" class="map-canvas"></div>
+                <div class="map-disclaimer">
+                  地图仅展示地点位置，不使用景点坐标直线冒充道路路线。真实距离与时间请查看下方高德路线分段。
+                </div>
+              </div>
             </a-card>
           </div>
         </div>
+
+        <!-- 可执行行程闭环：全部来自后端轻量 execution-view。 -->
+        <template v-if="executionView">
+          <RouteSegments
+            :segments="executionView.route_segments"
+            :summary="executionView.route_summary"
+            :quality="executionView.route_quality_report"
+          />
+          <DayTimeline :report="executionView.schedule_quality_report" />
+          <ExecutionQualityPanel
+            :route="executionView.route_quality_report"
+            :schedule="executionView.schedule_quality_report"
+            :commute="executionView.commute_report"
+            :constraint="executionView.constraint_report"
+          />
+        </template>
 
         <!-- 每日行程:可折叠 -->
         <a-card title="📅 每日行程" :bordered="false" class="days-card">
@@ -186,7 +286,7 @@
                       <!-- 景点图片 -->
                       <div class="attraction-image-wrapper">
                         <img
-                          :src="getAttractionImage(item.name, index)"
+                          :src="getAttractionImage(item, index)"
                           :alt="item.name"
                           class="attraction-image"
                           @error="handleImageError"
@@ -240,16 +340,24 @@
 
               <!-- 餐饮安排 -->
               <a-divider orientation="left">🍽️ 餐饮安排</a-divider>
-              <a-descriptions :column="1" bordered size="small">
-                <a-descriptions-item
-                  v-for="meal in day.meals"
-                  :key="meal.type"
-                  :label="getMealLabel(meal.type)"
-                >
-                  {{ meal.name }}
-                  <span v-if="meal.description"> - {{ meal.description }}</span>
-                </a-descriptions-item>
-              </a-descriptions>
+              <div class="meal-grid">
+                <article v-for="meal in day.meals" :key="`${meal.type}-${meal.name}`" class="meal-card">
+                  <div class="meal-card-header">
+                    <span>{{ getMealLabel(meal.type) }}</span>
+                    <a-tag :color="getMealStatusColor(meal.opening_status)">
+                      {{ getMealStatusLabel(meal.opening_status) }}
+                    </a-tag>
+                  </div>
+                  <strong>{{ meal.name }}</strong>
+                  <p v-if="meal.address">{{ meal.address }}</p>
+                  <div class="meal-meta">
+                    <span v-if="meal.planned_start_time">计划 {{ meal.planned_start_time }}–{{ meal.planned_end_time || '?' }}</span>
+                    <span v-if="meal.opening_hours">营业 {{ meal.opening_hours }}</span>
+                    <span v-if="meal.source">来源 {{ meal.source === 'amap' ? '高德 POI' : '兜底安排' }}</span>
+                  </div>
+                  <p v-if="meal.description" class="meal-description">{{ meal.description }}</p>
+                </article>
+              </div>
             </a-collapse-panel>
           </a-collapse>
         </a-card>
@@ -288,7 +396,7 @@
       </div>
     </div>
 
-    <a-empty v-else description="没有找到旅行计划数据">
+    <a-empty v-else-if="!loadingSession" description="没有找到旅行计划数据">
       <template #image>
         <div style="font-size: 80px;">🗺️</div>
       </template>
@@ -297,6 +405,13 @@
       </template>
       <a-button type="primary" @click="goBack">返回首页创建行程</a-button>
     </a-empty>
+
+    <SessionDetailDrawer
+      :open="detailOpen"
+      :loading="loadingDetail"
+      :state="sessionState"
+      @close="detailOpen = false"
+    />
 
     <!-- 回到顶部按钮 -->
     <a-back-top :visibility-height="300">
@@ -308,38 +423,182 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { DownOutlined } from '@ant-design/icons-vue'
 import AMapLoader from '@amap/amap-jsapi-loader'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
-import type { TripPlan } from '@/types'
+import SessionDetailDrawer from '@/components/SessionDetailDrawer.vue'
+import RouteSegments from '@/components/execution/RouteSegments.vue'
+import DayTimeline from '@/components/execution/DayTimeline.vue'
+import ExecutionQualityPanel from '@/components/execution/ExecutionQualityPanel.vue'
+import { getAttractionPhoto, getTripExecutionView, getTripSession, resumeTripSession } from '@/services/api'
+import type { AgentState, Attraction, QualityLevel, TripExecutionView, TripPlan, TripPlanResponse } from '@/types'
 
+
+const route = useRoute()
 const router = useRouter()
 const tripPlan = ref<TripPlan | null>(null)
+const tripPlanResponse = ref<TripPlanResponse | null>(null)
+const sessionState = ref<AgentState | null>(null)
+const executionView = ref<TripExecutionView | null>(null)
+const loadingSession = ref(false)
+const loadingDetail = ref(false)
+const resuming = ref(false)
+const detailOpen = ref(false)
+const loadSource = ref<'server' | 'cache' | null>(null)
 const editMode = ref(false)
+const isLocalDraft = ref(sessionStorage.getItem('tripPlanLocalDraft') === 'true')
 const originalPlan = ref<TripPlan | null>(null)
 const attractionPhotos = ref<Record<string, string>>({})
 const activeSection = ref('overview')
 const activeDays = ref<number[]>([0]) // 默认展开第一天
+const sessionId = computed(() => String(route.params.sessionId || ''))
+const canResume = computed(() => executionView.value?.can_resume ?? false)
+
+const hasExecutionMetadata = computed(() => {
+  const response = tripPlanResponse.value
+  return Boolean(
+    response?.session_id ||
+      response?.execution_steps != null ||
+      response?.completion_mode ||
+      response?.quality_level ||
+      response?.quality_score != null ||
+      response?.warnings?.length
+  )
+})
+
 let map: any = null
 
-onMounted(async () => {
-  const data = sessionStorage.getItem('tripPlan')
-  if (data) {
-    tripPlan.value = JSON.parse(data)
-    // 加载景点图片
-    await loadAttractionPhotos()
-    // 等待DOM渲染完成后初始化地图
-    await nextTick()
-    initMap()
+const renderCurrentPlan = async () => {
+  attractionPhotos.value = {}
+  if (map) {
+    map.destroy()
+    map = null
   }
-})
+  if (!tripPlan.value) return
+
+  // 图片是增强信息，异步加载即可，不能阻塞 execution-view 主体和路线报告展示。
+  void loadAttractionPhotos()
+  await nextTick()
+  await initMap()
+}
+
+const applyExecutionView = async (view: TripExecutionView) => {
+  executionView.value = view
+  tripPlan.value = view.trip_plan || null
+  tripPlanResponse.value = {
+    success: Boolean(view.trip_plan),
+    message: view.finished ? '行程执行完成' : '行程执行中',
+    data: view.trip_plan || null,
+    session_id: view.session_id,
+    execution_steps: view.current_step,
+    completion_mode: view.completion_mode,
+    quality_level: view.quality_level,
+    quality_score: view.quality_score,
+    warnings: view.warnings
+  }
+  loadSource.value = 'server'
+  isLocalDraft.value = false
+  sessionStorage.removeItem('tripPlanLocalDraft')
+
+  // 浏览器只保存最终展示结果作为断网回退，不缓存完整 AgentState。
+  sessionStorage.setItem('tripPlanResponse', JSON.stringify(tripPlanResponse.value))
+  if (tripPlan.value) {
+    sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
+  }
+  await renderCurrentPlan()
+}
+
+const loadCachedPlan = async (): Promise<boolean> => {
+  try {
+    const responseCache = sessionStorage.getItem('tripPlanResponse')
+    if (!responseCache) return false
+    const cachedResponse = JSON.parse(responseCache) as TripPlanResponse
+    if (cachedResponse.session_id !== sessionId.value || !cachedResponse.data) return false
+    tripPlanResponse.value = cachedResponse
+    tripPlan.value = cachedResponse.data
+    loadSource.value = 'cache'
+    await renderCurrentPlan()
+    return true
+  } catch (error) {
+    console.error('读取行程回退缓存失败:', error)
+    sessionStorage.removeItem('tripPlanResponse')
+    sessionStorage.removeItem('tripPlan')
+    return false
+  }
+}
+
+const loadSession = async () => {
+  if (!sessionId.value) {
+    message.warning('缺少会话 ID，已返回历史行程')
+    router.replace('/history')
+    return
+  }
+
+  loadingSession.value = true
+  loadSource.value = null
+  sessionState.value = null
+  executionView.value = null
+  try {
+    const view = await getTripExecutionView(sessionId.value)
+    await applyExecutionView(view)
+  } catch (error) {
+    const cacheLoaded = await loadCachedPlan()
+    if (!cacheLoaded) {
+      message.error(error instanceof Error ? error.message : '会话加载失败')
+    }
+  } finally {
+    loadingSession.value = false
+    // 行程主体受 loadingSession 控制；等待容器真正挂载后再创建地图，
+    // 避免高德 JS API 在加载态找不到 #amap-container。
+    await nextTick()
+    if (tripPlan.value && !map) {
+      await initMap()
+    }
+  }
+}
+
+watch(sessionId, loadSession, { immediate: true })
 
 const goBack = () => {
   router.push('/')
+}
+
+const goHistory = () => {
+  router.push('/history')
+}
+
+const openSessionDetail = async () => {
+  if (!sessionId.value) return
+  detailOpen.value = true
+  if (sessionState.value) return
+  loadingDetail.value = true
+  try {
+    // 完整 AgentState 只在用户主动查看执行详情时按需加载。
+    sessionState.value = await getTripSession(sessionId.value)
+  } catch (error) {
+    detailOpen.value = false
+    message.error(error instanceof Error ? error.message : '执行详情加载失败')
+  } finally {
+    loadingDetail.value = false
+  }
+}
+
+const handleResume = async () => {
+  if (!sessionId.value) return
+  resuming.value = true
+  try {
+    sessionState.value = await resumeTripSession(sessionId.value)
+    await loadSession()
+    message.success(sessionState.value.status === 'completed' ? '会话恢复完成' : '已从最近检查点继续执行')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '恢复会话失败')
+  } finally {
+    resuming.value = false
+  }
 }
 
 // 滚动到指定区域
@@ -365,8 +624,15 @@ const saveChanges = () => {
   // 更新sessionStorage
   if (tripPlan.value) {
     sessionStorage.setItem('tripPlan', JSON.stringify(tripPlan.value))
+    if (tripPlanResponse.value) {
+      tripPlanResponse.value.data = tripPlan.value
+      sessionStorage.setItem('tripPlanResponse', JSON.stringify(tripPlanResponse.value))
+    }
+    // 本地编辑后，原质量评分只代表生成时结果，不能视为已重新校验。
+    isLocalDraft.value = true
+    sessionStorage.setItem('tripPlanLocalDraft', 'true')
   }
-  message.success('修改已保存')
+  message.success('修改已保存为本地草稿，尚未重新校验')
 
   // 重新初始化地图以反映更改
   if (map) {
@@ -414,6 +680,26 @@ const moveAttraction = (dayIndex: number, attrIndex: number, direction: 'up' | '
   }
 }
 
+const getQualityLabel = (level: QualityLevel): string => {
+  const labels: Record<QualityLevel, string> = {
+    excellent: '优秀',
+    acceptable: '可接受',
+    degraded: '降级可用',
+    unusable: '不可用'
+  }
+  return labels[level]
+}
+
+const getQualityColor = (level: QualityLevel): string => {
+  const colors: Record<QualityLevel, string> = {
+    excellent: 'success',
+    acceptable: 'processing',
+    degraded: 'warning',
+    unusable: 'error'
+  }
+  return colors[level]
+}
+
 const getMealLabel = (type: string): string => {
   const labels: Record<string, string> = {
     breakfast: '早餐',
@@ -424,35 +710,57 @@ const getMealLabel = (type: string): string => {
   return labels[type] || type
 }
 
-// 加载所有景点图片
+const getMealStatusLabel = (status?: string): string => ({
+  open: '营业时间匹配',
+  unknown: '营业状态待确认',
+  fallback: '兜底餐饮安排'
+}[status || 'unknown'] || '营业状态待确认')
+
+const getMealStatusColor = (status?: string): string => ({
+  open: 'success',
+  unknown: 'warning',
+  fallback: 'default'
+}[status || 'unknown'] || 'warning')
+
+// 加载所有景点图片：后端已返回的 image_url/photos 优先，避免重复调用图片接口。
 const loadAttractionPhotos = async () => {
   if (!tripPlan.value) return
 
-  const promises: Promise<void>[] = []
-
-  tripPlan.value.days.forEach(day => {
-    day.attractions.forEach(attraction => {
-      const promise = fetch(`http://localhost:8000/api/poi/photo?name=${encodeURIComponent(attraction.name)}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.data.photo_url) {
-            attractionPhotos.value[attraction.name] = data.data.photo_url
-          }
-        })
-        .catch(err => {
-          console.error(`获取${attraction.name}图片失败:`, err)
-        })
-
-      promises.push(promise)
+  const missingAttractions: Attraction[] = []
+  tripPlan.value.days.forEach((day) => {
+    day.attractions.forEach((attraction) => {
+      const existingPhoto = attraction.image_url || attraction.photos?.[0]
+      if (existingPhoto) {
+        attractionPhotos.value[attraction.name] = existingPhoto
+      } else {
+        missingAttractions.push(attraction)
+      }
     })
   })
 
-  await Promise.all(promises)
+  await Promise.all(
+    missingAttractions.map(async (attraction) => {
+      try {
+        const data = await getAttractionPhoto(attraction.name)
+        const photoUrl = data.data?.photo_url || data.image_url
+        if (photoUrl) {
+          attractionPhotos.value[attraction.name] = photoUrl
+        }
+      } catch (error) {
+        // 图片属于增强信息，失败时使用占位图，不阻断行程展示。
+        console.error(`获取${attraction.name}图片失败:`, error)
+      }
+    })
+  )
 }
 
 // 获取景点图片
-const getAttractionImage = (name: string, index: number): string => {
-  // 如果已加载真实图片,返回真实图片
+const getAttractionImage = (attraction: Attraction, index: number): string => {
+  const name = attraction.name
+  const existingPhoto = attraction.image_url || attraction.photos?.[0]
+  if (existingPhoto) {
+    return existingPhoto
+  }
   if (attractionPhotos.value[name]) {
     return attractionPhotos.value[name]
   }
@@ -786,56 +1094,26 @@ const exportAsPDF = async () => {
   }
 }
 
-// 截取地图图片
-const captureMapImage = async () => {
-  if (!map) return
-
-  try {
-    // 获取地图容器
-    const mapContainer = document.getElementById('amap-container')
-    if (!mapContainer) return
-
-    // 使用高德地图的截图功能
-    const mapCanvas = mapContainer.querySelector('canvas')
-    if (mapCanvas) {
-      // 创建一个img元素替换地图容器
-      const img = document.createElement('img')
-      img.src = mapCanvas.toDataURL('image/png')
-      img.style.width = '100%'
-      img.style.height = '500px'
-      img.style.objectFit = 'cover'
-      img.id = 'map-snapshot'
-
-      // 隐藏原地图,显示截图
-      mapContainer.style.display = 'none'
-      mapContainer.parentElement?.appendChild(img)
-    }
-  } catch (error) {
-    console.error('截取地图失败:', error)
-  }
-}
-
-// 恢复地图
-const restoreMap = () => {
-  const mapContainer = document.getElementById('amap-container')
-  const snapshot = document.getElementById('map-snapshot')
-
-  if (mapContainer) {
-    mapContainer.style.display = 'block'
-  }
-
-  if (snapshot) {
-    snapshot.remove()
-  }
-}
-
 // 初始化地图
 const initMap = async () => {
   try {
+    const amapKey = import.meta.env.VITE_AMAP_WEB_JS_KEY
+    if (!amapKey) {
+      console.warn('未配置 VITE_AMAP_WEB_JS_KEY，跳过地图初始化')
+      return
+    }
+
+    // 地图容器可能仍被加载骨架隐藏。此时安静跳过，调用方会在 DOM
+    // 挂载完成后再次初始化，而不是让高德 SDK 抛出 container not exist。
+    const mapContainer = document.getElementById('amap-container')
+    if (!mapContainer) {
+      return
+    }
+
     const AMap = await AMapLoader.load({
-      key: import.meta.env.VITE_AMAP_WEB_JS_KEY,  // 高德地图Web端(JS API) Key
+      key: amapKey, // 高德地图 Web 端（JS API）Key
       version: '2.0',
-      plugins: ['AMap.Marker', 'AMap.Polyline', 'AMap.InfoWindow']
+      plugins: ['AMap.Marker', 'AMap.InfoWindow']
     })
 
     // 创建地图实例
@@ -916,44 +1194,10 @@ const addAttractionMarkers = (AMap: any) => {
     map.setFitView(markers)
   }
 
-  // 绘制路线
-  drawRoutes(AMap, allAttractions)
+  // 路线几何当前未由后端返回，因此地图只展示地点 Marker。
+  // 真实道路距离和耗时统一展示在 RouteSegments 中，禁止再画坐标直线。
 }
 
-// 绘制路线
-const drawRoutes = (AMap: any, attractions: any[]) => {
-  if (attractions.length < 2) return
-
-  // 按天分组绘制路线
-  const dayGroups: any = {}
-  attractions.forEach(attr => {
-    if (!dayGroups[attr.dayIndex]) {
-      dayGroups[attr.dayIndex] = []
-    }
-    dayGroups[attr.dayIndex].push(attr)
-  })
-
-  // 为每天的景点绘制路线
-  Object.values(dayGroups).forEach((dayAttractions: any) => {
-    if (dayAttractions.length < 2) return
-
-    const path = dayAttractions.map((attr: any) => [
-      attr.location.longitude,
-      attr.location.latitude
-    ])
-
-    const polyline = new AMap.Polyline({
-      path: path,
-      strokeColor: '#1890ff',
-      strokeWeight: 4,
-      strokeOpacity: 0.8,
-      strokeStyle: 'solid',
-      showDir: true // 显示方向箭头
-    })
-
-    map.add(polyline)
-  })
-}
 </script>
 
 <style scoped>
@@ -975,6 +1219,17 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
 .back-button {
   border-radius: 8px;
   font-weight: 500;
+}
+
+
+.session-loading-card,
+.cache-alert {
+  margin: 0 auto 24px;
+  max-width: 1200px;
+}
+
+.session-loading-card {
+  border-radius: 16px;
 }
 
 /* 内容布局 */
@@ -1203,6 +1458,33 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
   line-height: 1.6;
 }
 
+/* Agent 执行摘要 */
+.execution-card {
+  height: fit-content;
+}
+
+.execution-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-id {
+  margin-top: 12px;
+  color: #64748b;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.execution-alert {
+  margin-top: 14px;
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
 /* 预算卡片 */
 .budget-card {
   height: fit-content;
@@ -1264,6 +1546,87 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
 .map-card :deep(.ant-card-body) {
   height: calc(100% - 57px);
   padding: 0;
+}
+
+.map-content {
+  position: relative;
+  height: 100%;
+  min-height: 500px;
+}
+
+.map-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+}
+
+.map-disclaimer {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  left: 14px;
+  z-index: 10;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 12px;
+  color: #eff8f2;
+  background: rgba(23, 60, 43, 0.88);
+  backdrop-filter: blur(8px);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.meal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.meal-card {
+  padding: 15px;
+  border: 1px solid #e2e9e4;
+  border-radius: 14px;
+  background: #fbfdfb;
+}
+
+.meal-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #2c6b4c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.meal-card > strong {
+  color: #20372b;
+  font-size: 15px;
+}
+
+.meal-card p {
+  margin: 6px 0 0;
+  color: #6f7e75;
+  font-size: 12px;
+}
+
+.meal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.meal-meta span {
+  padding: 4px 7px;
+  border-radius: 6px;
+  color: #476252;
+  background: #eaf3ed;
+  font-size: 11px;
+}
+
+.meal-description {
+  line-height: 1.6;
 }
 
 /* 每日行程卡片 */
@@ -1431,4 +1794,5 @@ const drawRoutes = (AMap: any, attractions: any[]) => {
   }
 }
 </style>
+
 

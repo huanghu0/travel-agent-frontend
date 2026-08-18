@@ -14,6 +14,9 @@
       </div>
       <h1 class="page-title">智能旅行助手</h1>
       <p class="page-subtitle">基于AI的个性化旅行规划,让每一次出行都完美无忧</p>
+      <a-button ghost size="large" class="history-entry" @click="router.push('/history')">
+        🗂️ 查看历史行程
+      </a-button>
     </div>
 
     <a-card class="form-card" :bordered="false">
@@ -216,7 +219,12 @@ const loading = ref(false)
 const loadingProgress = ref(0)
 const loadingStatus = ref('')
 
-const formData = reactive<TripFormData & { start_date: Dayjs | null; end_date: Dayjs | null }>({
+type TripFormState = Omit<TripFormData, 'start_date' | 'end_date'> & {
+  start_date: Dayjs | null
+  end_date: Dayjs | null
+}
+
+const formData = reactive<TripFormState>({
   city: '',
   start_date: null,
   end_date: null,
@@ -290,14 +298,22 @@ const handleSubmit = async () => {
     loadingStatus.value = '✅ 完成!'
 
     if (response.success && response.data) {
-      // 保存到sessionStorage
+      // 保存完整响应，保留 session_id、质量评分、完成模式和警告。
+      sessionStorage.setItem('tripPlanResponse', JSON.stringify(response))
+      // 同时保留旧键，兼容已有结果页缓存。
       sessionStorage.setItem('tripPlan', JSON.stringify(response.data))
+      sessionStorage.removeItem('tripPlanLocalDraft')
+
+      if (!response.session_id) {
+        message.error('后端未返回会话 ID，无法建立可恢复的行程会话')
+        return
+      }
 
       message.success('旅行计划生成成功!')
 
-      // 短暂延迟后跳转
+      // 结果页以服务端 session_id 为唯一地址，刷新后可从 SQLite 恢复。
       setTimeout(() => {
-        router.push('/result')
+        router.push({ name: 'Result', params: { sessionId: response.session_id } })
       }, 500)
     } else {
       message.error(response.message || '生成失败')
@@ -417,6 +433,19 @@ const handleSubmit = async () => {
   color: rgba(255, 255, 255, 0.95);
   margin: 0;
   font-weight: 300;
+}
+
+
+.history-entry {
+  border-color: rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  margin-top: 22px;
+}
+
+.history-entry:hover {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: white !important;
+  color: white !important;
 }
 
 /* 表单卡片 */

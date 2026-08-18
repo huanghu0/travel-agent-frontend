@@ -5,6 +5,7 @@ import 'ant-design-vue/dist/reset.css'
 import App from './App.vue'
 import Home from './views/Home.vue'
 import Result from './views/Result.vue'
+import History from './views/History.vue'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -15,9 +16,18 @@ const router = createRouter({
       component: Home
     },
     {
-      path: '/result',
+      path: '/result/:sessionId',
       name: 'Result',
       component: Result
+    },
+    {
+      path: '/history',
+      name: 'History',
+      component: History
+    },
+    {
+      path: '/result',
+      redirect: '/history'
     }
   ]
 })

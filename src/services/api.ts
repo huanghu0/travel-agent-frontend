@@ -1,17 +1,26 @@
 import axios from 'axios'
-import type { TripFormData, TripPlanResponse } from '@/types'
+import type {
+  AgentSessionSummary,
+  AgentState,
+  AgentStatus,
+  HealthCheckResponse,
+  PoiPhotoResponse,
+  TripExecutionView,
+  TripFormData,
+  TripPlanResponse
+} from '@/types'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 1200000, // 20分钟超时
+  timeout: 1200000, // 行程生成包含外部工具调用，最多等待 20 分钟。
   headers: {
     'Content-Type': 'application/json'
   }
 })
 
-// 请求拦截器
+// 请求拦截器：开发阶段用于确认请求是否命中了正确的后端地址。
 apiClient.interceptors.request.use(
   (config) => {
     console.log('发送请求:', config.method?.toUpperCase(), config.url)
@@ -23,7 +32,7 @@ apiClient.interceptors.request.use(
   }
 )
 
-// 响应拦截器
+// 响应拦截器：保留 HTTP 状态，便于后续接入结构化错误展示。
 apiClient.interceptors.response.use(
   (response) => {
     console.log('收到响应:', response.status, response.config.url)
@@ -35,31 +44,98 @@ apiClient.interceptors.response.use(
   }
 )
 
-/**
- * 生成旅行计划
- */
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError<{ detail?: string; message?: string }>(error)) {
+    return error.response?.data?.detail || error.response?.data?.message || error.message || fallback
+  }
+  return error instanceof Error ? error.message : fallback
+}
+
+/** 生成旅行计划，并返回包含会话、质量评分和警告在内的完整响应。 */
 export async function generateTripPlan(formData: TripFormData): Promise<TripPlanResponse> {
   try {
     const response = await apiClient.post<TripPlanResponse>('/api/trip/plan', formData)
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('生成旅行计划失败:', error)
-    throw new Error(error.response?.data?.detail || error.message || '生成旅行计划失败')
+    throw new Error(getErrorMessage(error, '生成旅行计划失败'))
   }
 }
 
-/**
- * 健康检查
- */
-export async function healthCheck(): Promise<any> {
+/** 使用统一的 API 客户端查询景点图片，避免硬编码 localhost。 */
+export async function getAttractionPhoto(name: string): Promise<PoiPhotoResponse> {
   try {
-    const response = await apiClient.get('/health')
+    const response = await apiClient.get<PoiPhotoResponse>('/api/poi/photo', {
+      params: { name }
+    })
     return response.data
-  } catch (error: any) {
+  } catch (error: unknown) {
+    console.error(`获取${name}图片失败:`, error)
+    throw new Error(getErrorMessage(error, '获取景点图片失败'))
+  }
+}
+
+/** 后端健康检查的真实路径为 /api/health。 */
+export async function healthCheck(): Promise<HealthCheckResponse> {
+  try {
+    const response = await apiClient.get<HealthCheckResponse>('/api/health')
+    return response.data
+  } catch (error: unknown) {
     console.error('健康检查失败:', error)
-    throw new Error(error.message || '健康检查失败')
+    throw new Error(getErrorMessage(error, '健康检查失败'))
+  }
+}
+
+
+/** 查询最近的旅行规划会话摘要。 */
+export async function listTripSessions(options?: {
+  limit?: number
+  status?: AgentStatus
+}): Promise<AgentSessionSummary[]> {
+  try {
+    const response = await apiClient.get<AgentSessionSummary[]>('/api/trip/sessions', {
+      params: options
+    })
+    return response.data
+  } catch (error: unknown) {
+    console.error('查询会话列表失败:', error)
+    throw new Error(getErrorMessage(error, '查询历史行程失败'))
+  }
+}
+
+/** 读取结果页轻量执行视图，避免每次刷新传输完整 AgentState。 */
+export async function getTripExecutionView(sessionId: string): Promise<TripExecutionView> {
+  try {
+    const response = await apiClient.get<TripExecutionView>(
+      `/api/trip/sessions/${sessionId}/execution-view`
+    )
+    return response.data
+  } catch (error: unknown) {
+    console.error(`查询会话 ${sessionId} 执行视图失败:`, error)
+    throw new Error(getErrorMessage(error, '查询行程执行视图失败'))
+  }
+}
+
+/** 从 SQLite 最近检查点读取完整会话状态。 */
+export async function getTripSession(sessionId: string): Promise<AgentState> {
+  try {
+    const response = await apiClient.get<AgentState>(`/api/trip/sessions/${sessionId}`)
+    return response.data
+  } catch (error: unknown) {
+    console.error(`查询会话 ${sessionId} 失败:`, error)
+    throw new Error(getErrorMessage(error, '查询会话详情失败'))
+  }
+}
+
+/** 从最近检查点恢复执行，后端会避免重复已经成功的动作。 */
+export async function resumeTripSession(sessionId: string): Promise<AgentState> {
+  try {
+    const response = await apiClient.post<AgentState>(`/api/trip/sessions/${sessionId}/resume`)
+    return response.data
+  } catch (error: unknown) {
+    console.error(`恢复会话 ${sessionId} 失败:`, error)
+    throw new Error(getErrorMessage(error, '恢复旅行规划失败'))
   }
 }
 
 export default apiClient
-
