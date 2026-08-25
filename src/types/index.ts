@@ -596,3 +596,23 @@ export interface TripTaskEvent {
   data: Record<string, unknown>
   created_at: string
 }
+
+
+/** 当前登录用户；后端永远不会返回 password_hash。 */
+export interface AuthUser {
+  user_id: string
+  username: string
+  created_at: string
+}
+
+export interface AuthCredentials {
+  username: string
+  password: string
+}
+
+export interface AuthTokenResponse {
+  access_token: string
+  token_type: 'bearer'
+  expires_in: number
+  user: AuthUser
+}

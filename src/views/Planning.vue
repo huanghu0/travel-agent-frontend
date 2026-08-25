@@ -153,8 +153,9 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   cancelTripTask,
   getTripTask,
-  getTripTaskEventsUrl
+  openTripTaskEventStream
 } from '@/services/api'
+import type { TripTaskSseMessage } from '@/services/api'
 import type { TripPlanningTask, TripTaskEvent } from '@/types'
 
 const route = useRoute()
@@ -167,7 +168,8 @@ const cancelling = ref(false)
 const sseConnected = ref(false)
 const lastEventId = ref(0)
 const seenEventIds = new Set<number>()
-let source: EventSource | null = null
+let source: AbortController | null = null
+let reconnectTimer: number | null = null
 let pollTimer: number | null = null
 let redirecting = false
 
@@ -224,7 +226,7 @@ async function refreshTask(): Promise<void> {
       })
     }
     if (terminalStatuses.has(task.value.status)) {
-      source?.close()
+      source?.abort()
       source = null
       sseConnected.value = false
     }
@@ -236,7 +238,7 @@ async function refreshTask(): Promise<void> {
   }
 }
 
-function consumeEvent(raw: MessageEvent<string>): void {
+function consumeEvent(raw: TripTaskSseMessage): void {
   const eventId = Number(raw.lastEventId)
   if (Number.isFinite(eventId) && eventId > 0) {
     if (seenEventIds.has(eventId)) return
@@ -259,18 +261,34 @@ function consumeEvent(raw: MessageEvent<string>): void {
   }
 }
 
+function scheduleReconnect(): void {
+  if (reconnectTimer !== null || (task.value && terminalStatuses.has(task.value.status))) return
+  reconnectTimer = window.setTimeout(() => {
+    reconnectTimer = null
+    connectSse()
+  }, 1500)
+}
+
 function connectSse(): void {
   if (!taskId.value || source || (task.value && terminalStatuses.has(task.value.status))) return
-  source = new EventSource(getTripTaskEventsUrl(taskId.value, lastEventId.value))
-  source.onopen = () => {
-    sseConnected.value = true
-  }
-  source.onerror = () => {
-    sseConnected.value = false
-  }
-  for (const eventType of eventTypes) {
-    source.addEventListener(eventType, (event) => consumeEvent(event as MessageEvent<string>))
-  }
+  source = openTripTaskEventStream(taskId.value, lastEventId.value, {
+    onOpen: () => {
+      sseConnected.value = true
+    },
+    onEvent: (event) => {
+      if (eventTypes.includes(event.event)) consumeEvent(event)
+    },
+    onClose: () => {
+      source = null
+      sseConnected.value = false
+      void refreshTask().finally(scheduleReconnect)
+    },
+    onError: () => {
+      source = null
+      sseConnected.value = false
+      scheduleReconnect()
+    }
+  })
 }
 
 async function handleCancel(): Promise<void> {
@@ -293,8 +311,12 @@ async function handleCancel(): Promise<void> {
 }
 
 function closeStreams(): void {
-  source?.close()
+  source?.abort()
   source = null
+  if (reconnectTimer !== null) {
+    window.clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
   if (pollTimer !== null) {
     window.clearInterval(pollTimer)
     pollTimer = null

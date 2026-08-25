@@ -5,7 +5,7 @@
         <div>
           <div class="eyebrow">SESSION ARCHIVE</div>
           <h1>历史行程</h1>
-          <p>从 SQLite 检查点查询、复盘并恢复智能体任务。</p>
+          <p>从持久化检查点查询、复盘并恢复智能体任务。</p>
         </div>
         <a-space wrap>
           <a-button size="large" @click="router.push('/')">返回首页</a-button>

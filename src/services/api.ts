@@ -1,6 +1,9 @@
 import axios from 'axios'
 import type {
   AgentSessionSummary,
+  AuthCredentials,
+  AuthTokenResponse,
+  AuthUser,
   AgentState,
   AgentStatus,
   ConfirmDraftResponse,
@@ -17,6 +20,7 @@ import type {
   TripTaskCancelResponse,
   TripTaskCreateResponse
 } from '@/types'
+import { getAccessToken, notifyUnauthorized, setAuthSession } from '@/utils/auth'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -31,6 +35,8 @@ const apiClient = axios.create({
 // 请求拦截器：开发阶段用于确认请求是否命中了正确的后端地址。
 apiClient.interceptors.request.use(
   (config) => {
+    const token = getAccessToken()
+    if (token) config.headers.Authorization = `Bearer ${token}`
     console.log('发送请求:', config.method?.toUpperCase(), config.url)
     return config
   },
@@ -48,6 +54,9 @@ apiClient.interceptors.response.use(
   },
   (error) => {
     console.error('响应错误:', error.response?.status, error.message)
+    const requestUrl = String(error.config?.url || '')
+    const isCredentialRequest = requestUrl.includes('/api/auth/login') || requestUrl.includes('/api/auth/register')
+    if (error.response?.status === 401 && !isCredentialRequest) notifyUnauthorized()
     return Promise.reject(error)
   }
 )
@@ -57,6 +66,38 @@ function getErrorMessage(error: unknown, fallback: string): string {
     return error.response?.data?.detail || error.response?.data?.message || error.message || fallback
   }
   return error instanceof Error ? error.message : fallback
+}
+
+/** 注册成功后保存 Access Token 和当前用户。 */
+export async function registerUser(credentials: AuthCredentials): Promise<AuthTokenResponse> {
+  try {
+    const response = await apiClient.post<AuthTokenResponse>('/api/auth/register', credentials)
+    setAuthSession(response.data)
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '注册失败'))
+  }
+}
+
+/** 登录成功后保存 Access Token 和当前用户。 */
+export async function loginUser(credentials: AuthCredentials): Promise<AuthTokenResponse> {
+  try {
+    const response = await apiClient.post<AuthTokenResponse>('/api/auth/login', credentials)
+    setAuthSession(response.data)
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '登录失败'))
+  }
+}
+
+/** 使用当前 Token 校验登录状态并刷新用户信息。 */
+export async function getCurrentUser(): Promise<AuthUser> {
+  try {
+    const response = await apiClient.get<AuthUser>('/api/auth/me')
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '登录状态已失效'))
+  }
 }
 
 /** 生成旅行计划，并返回包含会话、质量评分和警告在内的完整响应。 */
@@ -262,11 +303,89 @@ export async function cancelTripTask(taskId: string): Promise<TripTaskCancelResp
   }
 }
 
-/** EventSource 使用绝对地址；after_event_id 支持手动重连时继续消费。 */
+export interface TripTaskSseMessage {
+  event: string
+  data: string
+  lastEventId: string
+}
+
+interface TripTaskStreamHandlers {
+  onOpen?: () => void
+  onEvent: (message: TripTaskSseMessage) => void
+  onClose?: () => void
+  onError?: (error: unknown) => void
+}
+
+/** 构建 SSE 地址；Token 只放 Authorization 请求头，禁止写入 URL。 */
 export function getTripTaskEventsUrl(taskId: string, afterEventId = 0): string {
   const url = new URL(`/api/trip/tasks/${taskId}/events`, API_BASE_URL)
-  if (afterEventId > 0) {
-    url.searchParams.set('after_event_id', String(afterEventId))
-  }
+  if (afterEventId > 0) url.searchParams.set('after_event_id', String(afterEventId))
   return url.toString()
+}
+
+function parseSseBlock(block: string): TripTaskSseMessage | null {
+  let event = 'message'
+  let lastEventId = ''
+  const data: string[] = []
+  for (const line of block.split(/\r?\n/)) {
+    if (!line || line.startsWith(':')) continue
+    const separator = line.indexOf(':')
+    const field = separator >= 0 ? line.slice(0, separator) : line
+    const value = separator >= 0 ? line.slice(separator + 1).replace(/^ /, '') : ''
+    if (field === 'event') event = value
+    else if (field === 'id') lastEventId = value
+    else if (field === 'data') data.push(value)
+  }
+  if (data.length === 0) return null
+  return { event, data: data.join('\n'), lastEventId }
+}
+
+/** 使用 fetch 读取带 Bearer Token 的 SSE，返回 AbortController 供页面主动关闭。 */
+export function openTripTaskEventStream(
+  taskId: string,
+  afterEventId: number,
+  handlers: TripTaskStreamHandlers
+): AbortController {
+  const controller = new AbortController()
+  void (async () => {
+    try {
+      const token = getAccessToken()
+      const response = await fetch(getTripTaskEventsUrl(taskId, afterEventId), {
+        method: 'GET',
+        headers: {
+          Accept: 'text/event-stream',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
+        signal: controller.signal
+      })
+      if (response.status === 401) {
+        notifyUnauthorized()
+        throw new Error('登录状态已失效，请重新登录')
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { detail?: string } | null
+        throw new Error(payload?.detail || `任务事件连接失败（HTTP ${response.status}）`)
+      }
+      if (!response.body) throw new Error('浏览器不支持流式任务进度')
+      handlers.onOpen?.()
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const blocks = buffer.split(/\r?\n\r?\n/)
+        buffer = blocks.pop() || ''
+        for (const block of blocks) {
+          const message = parseSseBlock(block)
+          if (message) handlers.onEvent(message)
+        }
+      }
+      if (!controller.signal.aborted) handlers.onClose?.()
+    } catch (error: unknown) {
+      if (!controller.signal.aborted) handlers.onError?.(error)
+    }
+  })()
+  return controller
 }
