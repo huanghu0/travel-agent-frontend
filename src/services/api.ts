@@ -188,7 +188,7 @@ export async function getTripSession(sessionId: string): Promise<AgentState> {
   }
 }
 
-/** 从最近检查点恢复执行，后端会避免重复已经成功的动作。 */
+/** 恢复有效检查点；失败或预算耗尽时后端会返回一个重新规划的新会话。 */
 export async function resumeTripSession(sessionId: string): Promise<AgentState> {
   try {
     const response = await apiClient.post<AgentState>(`/api/trip/sessions/${sessionId}/resume`)

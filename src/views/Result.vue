@@ -14,7 +14,7 @@
           :loading="resuming"
           @click="handleResume"
         >
-          ▶️ 恢复执行
+          ▶️ {{ resumeActionLabel }}
         </a-button>
         <a-button
           v-if="tripPlan && !editMode && !isLocalDraft"
@@ -87,9 +87,9 @@
             <a-menu-item v-if="executionView" key="execution-timeline">
               <span>⏱️ 地点时间轴</span>
             </a-menu-item>
-            <a-menu-item v-if="executionView" key="execution-quality">
+            <!-- <a-menu-item v-if="executionView" key="execution-quality">
               <span>🧪 约束报告</span>
-            </a-menu-item>
+            </a-menu-item> -->
             <a-sub-menu key="days" title="📅 每日行程">
               <a-menu-item v-for="(day, index) in tripPlan.days" :key="`day-${index}`">
                 第{{ day.day_index + 1 }}天
@@ -123,7 +123,7 @@
             </a-card>
 
             <!-- 后端 Agent 执行与质量摘要：完整响应契约中的元数据。 -->
-            <a-card
+            <!-- <a-card
               v-if="hasExecutionMetadata"
               title="🤖 执行与质量"
               :bordered="false"
@@ -143,9 +143,9 @@
                   执行 {{ tripPlanResponse.execution_steps }} 步
                 </a-tag>
               </div>
-              <!-- <div v-if="tripPlanResponse?.session_id" class="session-id">
+              <div v-if="tripPlanResponse?.session_id" class="session-id">
                 会话 ID：{{ tripPlanResponse.session_id }}
-              </div> -->
+              </div>
               <a-alert
                 v-if="isLocalDraft"
                 type="warning"
@@ -167,7 +167,7 @@
                   </ul>
                 </template>
               </a-alert>
-            </a-card>
+            </a-card> -->
 
             <!-- 预算明细 -->
             <a-card id="budget" v-if="tripPlan.budget" title="💰 预算明细" :bordered="false" class="budget-card">
@@ -217,12 +217,12 @@
             :quality="executionView.route_quality_report"
           />
           <DayTimeline :report="executionView.schedule_quality_report" />
-          <ExecutionQualityPanel
+          <!-- <ExecutionQualityPanel
             :route="executionView.route_quality_report"
             :schedule="executionView.schedule_quality_report"
             :commute="executionView.commute_report"
             :constraint="executionView.constraint_report"
-          />
+          /> -->
         </template>
 
         <!-- 每日行程:可折叠 -->
@@ -562,6 +562,12 @@ const activeSection = ref('overview')
 const activeDays = ref<number[]>([0]) // 默认展开第一天
 const sessionId = computed(() => String(route.params.sessionId || ''))
 const canResume = computed(() => executionView.value?.can_resume ?? false)
+const resumeActionLabel = computed(() => {
+  const status = executionView.value?.status
+  return status && ['failed', 'max_steps_reached', 'budget_exhausted', 'convergence_stopped'].includes(status)
+    ? '重新规划'
+    : '恢复执行'
+})
 const canShare = computed(() =>
   Boolean(
     sessionId.value &&
@@ -723,9 +729,22 @@ const handleResume = async () => {
   if (!sessionId.value) return
   resuming.value = true
   try {
-    sessionState.value = await resumeTripSession(sessionId.value)
-    await loadSession()
-    message.success(sessionState.value.status === 'completed' ? '会话恢复完成' : '已从最近检查点继续执行')
+    const previousSessionId = sessionId.value
+    const state = await resumeTripSession(previousSessionId)
+    sessionState.value = state
+    const restarted = state.session_id !== previousSessionId
+    if (restarted) {
+      await router.replace({ name: 'Result', params: { sessionId: state.session_id } })
+    } else {
+      await loadSession()
+    }
+    message.success(
+      restarted
+        ? '原会话已结束，已创建新会话重新规划'
+        : state.status === 'completed'
+          ? '会话恢复完成'
+          : '已从最近检查点继续执行'
+    )
   } catch (error) {
     message.error(error instanceof Error ? error.message : '恢复会话失败')
   } finally {

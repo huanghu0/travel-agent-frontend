@@ -79,6 +79,12 @@ export function canResumeSession(status: AgentStatus): boolean {
   return status !== 'completed' && status !== 'cancelled'
 }
 
+export function getResumeActionLabel(status: AgentStatus): string {
+  return ['failed', 'max_steps_reached', 'budget_exhausted', 'convergence_stopped'].includes(status)
+    ? '重新规划'
+    : '恢复执行'
+}
+
 /** 将完整 AgentState 投影为结果页使用的公开响应结构。 */
 export function stateToTripPlanResponse(state: AgentState): TripPlanResponse {
   return {

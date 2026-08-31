@@ -87,7 +87,7 @@
               :loading="resumingSessionId === session.session_id"
               @click="resumeSession(session.session_id)"
             >
-              恢复执行
+              {{ getResumeActionLabel(session.status) }}
             </a-button>
           </div>
         </article>
@@ -114,7 +114,8 @@ import {
   canResumeSession,
   formatSessionDate,
   getAgentStatusColor,
-  getAgentStatusLabel
+  getAgentStatusLabel,
+  getResumeActionLabel
 } from '@/utils/session'
 
 const router = useRouter()
@@ -178,10 +179,17 @@ const resumeSession = async (sessionId: string) => {
   resumingSessionId.value = sessionId
   try {
     const state = await resumeTripSession(sessionId)
-    message.success(state.status === 'completed' ? '会话恢复完成' : '会话已从检查点继续执行')
+    const restarted = state.session_id !== sessionId
+    message.success(
+      restarted
+        ? '原会话已结束，已创建新会话重新规划'
+        : state.status === 'completed'
+          ? '会话恢复完成'
+          : '会话已从检查点继续执行'
+    )
     await loadSessions()
     if (state.trip_plan) {
-      openResult(sessionId)
+      openResult(state.session_id)
     } else {
       selectedState.value = state
       detailOpen.value = true
