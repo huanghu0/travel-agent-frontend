@@ -9,6 +9,7 @@
         <nav aria-label="主导航">
           <router-link to="/">规划行程</router-link>
           <router-link to="/history">历史行程</router-link>
+          <router-link to="/shared-guides">分享广场</router-link>
         </nav>
         <div class="account">
           <div class="avatar">{{ userInitial }}</div>
@@ -67,9 +68,21 @@ button, input { font: inherit; }
 .account strong { font-size: 13px; }
 .account .ant-btn { margin-left: 6px; color: #fff; border-color: rgba(255,255,255,.28); background: transparent; }
 @media (max-width: 760px) {
-  .app-navigation { grid-template-columns: 1fr auto; padding: 0 14px; }
-  .app-navigation nav { display: none; }
+  .app-navigation {
+    height: auto;
+    min-height: 68px;
+    grid-template-areas: 'brand account' 'nav nav';
+    grid-template-columns: 1fr auto;
+    gap: 8px 12px;
+    padding: 10px 14px 9px;
+  }
+  .brand { grid-area: brand; }
+  .app-navigation nav { grid-area: nav; display: flex; width: 100%; gap: 4px; }
+  .app-navigation nav a { flex: 1; padding: 7px 6px; text-align: center; }
+  .account { grid-area: account; }
   .account div:nth-child(2) { display: none; }
   .app-content { padding: 0; }
 }
 </style>
+
+

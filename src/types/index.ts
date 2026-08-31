@@ -598,6 +598,62 @@ export interface TripTaskEvent {
 }
 
 
+/** 分享广场公开快照；后端已剔除用户标识、检索文本和索引内部字段。 */
+export interface SharedTripRequestSnapshot {
+  city: string
+  travel_days: number
+  transportation: string
+  accommodation: string
+  preferences: string[]
+}
+
+export interface SharedGuideSnapshot {
+  request: SharedTripRequestSnapshot
+  trip_plan: TripPlan
+}
+
+export type SharedGuideSort = 'latest' | 'popular'
+
+export interface SharedGuideListItem {
+  share_id: string
+  title: string
+  author_username: string
+  city: string
+  travel_days: number
+  transportation: string
+  preferences: string[]
+  cover_image_url?: string | null
+  quality_score?: number | null
+  like_count: number
+  published_at: string
+  liked_by_me: boolean
+}
+
+export interface SharedGuideDetail extends SharedGuideListItem {
+  snapshot: SharedGuideSnapshot
+}
+
+export interface SharedGuidePage {
+  items: SharedGuideListItem[]
+  next_cursor?: string | null
+}
+
+export interface OwnedSharedGuideListItem extends SharedGuideListItem {
+  publication_status: string
+  index_status: string
+  last_index_error?: string | null
+}
+
+export interface OwnedSharedGuidePage {
+  items: OwnedSharedGuideListItem[]
+  next_cursor?: string | null
+}
+
+export interface LikeMutationResponse {
+  liked: boolean
+  like_count: number
+}
+
 /** 当前登录用户；后端永远不会返回 password_hash。 */
 export interface AuthUser {
   user_id: string

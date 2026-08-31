@@ -9,9 +9,6 @@
         <div>
           <p class="eyebrow">LIVE ITINERARY BUILD</p>
           <h1>{{ task?.request.city || '正在读取目的地' }} · 行程正在成形</h1>
-          <p class="subtitle">
-            任务已经交给后台 Worker。关闭页面、刷新或暂时断网都不会中断执行。
-          </p>
         </div>
         <div class="connection-pill" :class="{ offline: !sseConnected }">
           <span class="signal-dot"></span>
@@ -107,10 +104,6 @@
         </section>
 
         <footer class="action-bar">
-          <div>
-            <span>任务编号</span>
-            <code>{{ task.task_id }}</code>
-          </div>
           <div class="actions">
             <a-button @click="router.push('/history')">查看历史</a-button>
             <a-button

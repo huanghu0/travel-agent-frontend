@@ -18,7 +18,13 @@ import type {
   TripPlanResponse,
   TripPlanningTask,
   TripTaskCancelResponse,
-  TripTaskCreateResponse
+  TripTaskCreateResponse,
+  LikeMutationResponse,
+  OwnedSharedGuideListItem,
+  OwnedSharedGuidePage,
+  SharedGuideDetail,
+  SharedGuidePage,
+  SharedGuideSort
 } from '@/types'
 import { getAccessToken, notifyUnauthorized, setAuthSession } from '@/utils/auth'
 
@@ -62,8 +68,14 @@ apiClient.interceptors.response.use(
 )
 
 function getErrorMessage(error: unknown, fallback: string): string {
-  if (axios.isAxiosError<{ detail?: string; message?: string }>(error)) {
-    return error.response?.data?.detail || error.response?.data?.message || error.message || fallback
+  if (axios.isAxiosError<{ detail?: string | Array<{ msg?: string }>; message?: string }>(error)) {
+    const detail = error.response?.data?.detail
+    if (typeof detail === 'string') return detail
+    if (Array.isArray(detail)) {
+      const validationMessage = detail.map((item) => item.msg).filter(Boolean).join('；')
+      if (validationMessage) return validationMessage
+    }
+    return error.response?.data?.message || error.message || fallback
   }
   return error instanceof Error ? error.message : fallback
 }
@@ -255,6 +267,111 @@ export async function listTripPlanVersions(sessionId: string): Promise<TripPlanV
     return response.data
   } catch (error: unknown) {
     throw new Error(getErrorMessage(error, '查询行程版本失败'))
+  }
+}
+
+export interface SharedGuideListOptions {
+  city?: string
+  travel_days?: number
+  transportation?: string
+  sort?: SharedGuideSort
+  limit?: number
+  cursor?: string
+}
+
+/** 浏览分享广场；登录后响应会包含当前用户的点赞状态。 */
+export async function listSharedGuides(options?: SharedGuideListOptions): Promise<SharedGuidePage> {
+  try {
+    const response = await apiClient.get<SharedGuidePage>('/api/shared-guides', { params: options })
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '加载分享广场失败'))
+  }
+}
+
+/** 读取公开分享快照，不暴露源会话、检索文本或索引内部字段。 */
+export async function getSharedGuide(shareId: string): Promise<SharedGuideDetail> {
+  try {
+    const response = await apiClient.get<SharedGuideDetail>(`/api/shared-guides/${shareId}`)
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '加载分享攻略失败'))
+  }
+}
+
+/** 将当前确认版本发布到分享广场。 */
+export async function shareTripSession(
+  sessionId: string,
+  title?: string | null
+): Promise<OwnedSharedGuideListItem> {
+  try {
+    const response = await apiClient.post<OwnedSharedGuideListItem>(
+      `/api/trip/sessions/${sessionId}/share`,
+      { title: title?.trim() || null }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '发布行程失败'))
+  }
+}
+
+/** 查询当前用户已发布的攻略。 */
+export async function listMySharedGuides(
+  options?: SharedGuideListOptions
+): Promise<OwnedSharedGuidePage> {
+  try {
+    const response = await apiClient.get<OwnedSharedGuidePage>('/api/users/me/shared-guides', {
+      params: options
+    })
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '加载我的分享失败'))
+  }
+}
+
+export async function updateSharedGuide(
+  shareId: string,
+  title?: string | null
+): Promise<OwnedSharedGuideListItem> {
+  try {
+    const response = await apiClient.put<OwnedSharedGuideListItem>(
+      `/api/shared-guides/${shareId}`,
+      { title: title?.trim() || null }
+    )
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '更新分享攻略失败'))
+  }
+}
+
+export async function deleteSharedGuide(shareId: string): Promise<void> {
+  try {
+    await apiClient.delete(`/api/shared-guides/${shareId}`)
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '取消分享失败'))
+  }
+}
+
+export async function setSharedGuideLike(
+  shareId: string,
+  liked: boolean
+): Promise<LikeMutationResponse> {
+  try {
+    const response = liked
+      ? await apiClient.put<LikeMutationResponse>(`/api/shared-guides/${shareId}/like`)
+      : await apiClient.delete<LikeMutationResponse>(`/api/shared-guides/${shareId}/like`)
+    return response.data
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, liked ? '点赞失败' : '取消点赞失败'))
+  }
+}
+
+/** 永久删除当前用户的一条旅行规划会话及其任务、草稿和版本。 */
+export async function deleteTripSession(sessionId: string): Promise<void> {
+  try {
+    await apiClient.delete(`/api/trip/sessions/${sessionId}`)
+  } catch (error: unknown) {
+    throw new Error(getErrorMessage(error, '删除旅行会话失败'))
   }
 }
 

@@ -7,14 +7,6 @@
     <section class="story-panel">
       <p class="eyebrow">PERSONAL TRAVEL ATLAS</p>
       <h1>把每一段旅程，<br />收藏进自己的地图。</h1>
-      <p class="intro">
-        登录后，你的规划任务、行程版本、执行记录和质量报告都会独立保存，其他用户无法查看。
-      </p>
-      <div class="feature-list">
-        <article><span>01</span><div><strong>断线继续</strong><p>后台规划不中断，重新登录即可恢复。</p></div></article>
-        <article><span>02</span><div><strong>会话隔离</strong><p>历史行程、草稿和任务只属于当前账号。</p></div></article>
-        <article><span>03</span><div><strong>持续打磨</strong><p>编辑、重新评估并保留每个确认版本。</p></div></article>
-      </div>
     </section>
 
     <section class="auth-card">
@@ -71,8 +63,6 @@
           {{ mode === 'login' ? '登录并继续' : '注册并开始规划' }}
         </a-button>
       </a-form>
-
-      <p class="security-note">密码使用 Argon2id 加密保存 · 登录凭证默认有效 7 天</p>
     </section>
   </main>
 </template>

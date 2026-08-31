@@ -8,6 +8,7 @@ import Result from './views/Result.vue'
 import History from './views/History.vue'
 import Planning from './views/Planning.vue'
 import Login from './views/Login.vue'
+import SharedGuides from './views/SharedGuides.vue'
 import { AUTH_UNAUTHORIZED_EVENT, getAccessToken } from '@/utils/auth'
 
 const router = createRouter({
@@ -41,6 +42,12 @@ const router = createRouter({
       path: '/history',
       name: 'History',
       component: History,
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/shared-guides',
+      name: 'SharedGuides',
+      component: SharedGuides,
       meta: { requiresAuth: true }
     },
     {

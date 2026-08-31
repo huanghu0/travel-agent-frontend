@@ -5,7 +5,6 @@
         <div>
           <div class="eyebrow">SESSION ARCHIVE</div>
           <h1>历史行程</h1>
-          <p>从持久化检查点查询、复盘并恢复智能体任务。</p>
         </div>
         <a-space wrap>
           <a-button size="large" @click="router.push('/')">返回首页</a-button>
@@ -68,11 +67,20 @@
             <strong>{{ session.current_step }} / {{ session.max_steps }}</strong>
           </div>
 
-          <div class="session-id">{{ session.session_id }}</div>
+          <!-- <div class="session-id">{{ session.session_id }}</div> -->
 
           <div class="card-actions">
-            <a-button @click="openDetails(session.session_id)">执行详情</a-button>
+            <!-- <a-button @click="openDetails(session.session_id)">执行详情</a-button> -->
             <a-button @click="openResult(session.session_id)">查看行程</a-button>
+            <a-popconfirm
+              title="确定永久删除这条会话吗？"
+              description="关联任务、草稿和版本也会一并删除，且无法恢复。"
+              ok-text="确认删除"
+              cancel-text="取消"
+              @confirm="removeSession(session.session_id)"
+            >
+              <a-button danger :loading="deletingSessionId === session.session_id">删除</a-button>
+            </a-popconfirm>
             <a-button
               v-if="canResumeSession(session.status)"
               type="primary"
@@ -100,7 +108,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import SessionDetailDrawer from '@/components/SessionDetailDrawer.vue'
-import { getTripSession, listTripSessions, resumeTripSession } from '@/services/api'
+import { deleteTripSession, getTripSession, listTripSessions, resumeTripSession } from '@/services/api'
 import type { AgentSessionSummary, AgentState, AgentStatus } from '@/types'
 import {
   canResumeSession,
@@ -114,6 +122,7 @@ const loading = ref(false)
 const sessions = ref<AgentSessionSummary[]>([])
 const statusFilter = ref<AgentStatus | undefined>(undefined)
 const resumingSessionId = ref('')
+const deletingSessionId = ref('')
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const selectedState = ref<AgentState | null>(null)
@@ -125,7 +134,8 @@ const statuses: AgentStatus[] = [
   'failed',
   'max_steps_reached',
   'budget_exhausted',
-  'convergence_stopped'
+  'convergence_stopped',
+  'cancelled'
 ]
 
 const loadSessions = async () => {
@@ -180,6 +190,23 @@ const resumeSession = async (sessionId: string) => {
     message.error(error instanceof Error ? error.message : '恢复会话失败')
   } finally {
     resumingSessionId.value = ''
+  }
+}
+
+const removeSession = async (sessionId: string) => {
+  deletingSessionId.value = sessionId
+  try {
+    await deleteTripSession(sessionId)
+    sessions.value = sessions.value.filter((item) => item.session_id !== sessionId)
+    if (selectedState.value?.session_id === sessionId) {
+      detailOpen.value = false
+      selectedState.value = null
+    }
+    message.success('旅行会话已永久删除')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '删除会话失败')
+  } finally {
+    deletingSessionId.value = ''
   }
 }
 
@@ -349,6 +376,7 @@ onMounted(loadSessions)
 .card-actions {
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 10px;
 }
 
 @media (max-width: 1000px) {

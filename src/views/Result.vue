@@ -7,7 +7,7 @@
       </a-button>
       <a-space size="middle">
         <a-button @click="goHistory">🗂️ 历史行程</a-button>
-        <a-button v-if="sessionId" :loading="loadingDetail" @click="openSessionDetail">🔎 执行详情</a-button>
+        <!-- <a-button v-if="sessionId" :loading="loadingDetail" @click="openSessionDetail">🔎 执行详情</a-button> -->
         <a-button
           v-if="canResume"
           type="primary"
@@ -15,6 +15,15 @@
           @click="handleResume"
         >
           ▶️ 恢复执行
+        </a-button>
+        <a-button
+          v-if="tripPlan && !editMode && !isLocalDraft"
+          :loading="sharing"
+          :disabled="!canShare"
+          :title="canShare ? undefined : '当前行程尚未执行完成，暂时不能分享到广场'"
+          @click="handleShare"
+        >
+          🌍 分享行程
         </a-button>
         <a-button v-if="tripPlan && !editMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
@@ -27,7 +36,7 @@
         </a-button>
 
         <!-- 导出按钮 -->
-        <a-dropdown v-if="tripPlan && !editMode">
+        <!-- <a-dropdown v-if="tripPlan && !editMode">
           <template #overlay>
             <a-menu>
               <a-menu-item key="image" @click="exportAsImage">
@@ -41,7 +50,7 @@
           <a-button type="default">
             📥 导出行程 <DownOutlined />
           </a-button>
-        </a-dropdown>
+        </a-dropdown> -->
       </a-space>
     </div>
 
@@ -134,9 +143,9 @@
                   执行 {{ tripPlanResponse.execution_steps }} 步
                 </a-tag>
               </div>
-              <div v-if="tripPlanResponse?.session_id" class="session-id">
+              <!-- <div v-if="tripPlanResponse?.session_id" class="session-id">
                 会话 ID：{{ tripPlanResponse.session_id }}
-              </div>
+              </div> -->
               <a-alert
                 v-if="isLocalDraft"
                 type="warning"
@@ -513,6 +522,7 @@ import {
   getTripExecutionView,
   getTripSession,
   resumeTripSession,
+  shareTripSession,
   updateTripDraft
 } from '@/services/api'
 import type {
@@ -536,6 +546,7 @@ const executionView = ref<TripExecutionView | null>(null)
 const loadingSession = ref(false)
 const loadingDetail = ref(false)
 const resuming = ref(false)
+const sharing = ref(false)
 const detailOpen = ref(false)
 const loadSource = ref<'server' | 'cache' | null>(null)
 const editMode = ref(false)
@@ -551,7 +562,15 @@ const activeSection = ref('overview')
 const activeDays = ref<number[]>([0]) // 默认展开第一天
 const sessionId = computed(() => String(route.params.sessionId || ''))
 const canResume = computed(() => executionView.value?.can_resume ?? false)
-
+const canShare = computed(() =>
+  Boolean(
+    sessionId.value &&
+      tripPlan.value &&
+      !editMode.value &&
+      !isLocalDraft.value &&
+      executionView.value?.status === 'completed'
+  )
+)
 const hasExecutionMetadata = computed(() => {
   const response = tripPlanResponse.value
   return Boolean(
@@ -663,6 +682,25 @@ const goBack = () => {
 
 const goHistory = () => {
   router.push('/history')
+}
+
+const handleShare = async () => {
+  if (!canShare.value || !sessionId.value || !tripPlan.value) {
+    message.warning('当前行程尚未执行完成，暂时不能分享到广场')
+    return
+  }
+  sharing.value = true
+  try {
+    const shared = await shareTripSession(
+      sessionId.value,
+      `${tripPlan.value.city} · ${tripPlan.value.days.length}日行程`
+    )
+    message.success(`《${shared.title}》已发布到分享广场`)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '发布行程失败')
+  } finally {
+    sharing.value = false
+  }
 }
 
 const openSessionDetail = async () => {
