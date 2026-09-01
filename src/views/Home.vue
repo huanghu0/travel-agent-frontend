@@ -34,20 +34,24 @@
 
           <a-row :gutter="24">
             <a-col :span="8">
-              <a-form-item name="city" :rules="[{ required: true, message: '请输入目的地城市' }]">
+              <a-form-item name="city_codes" :rules="[{ required: true, message: '请选择目的地城市' }]">
                 <template #label>
                   <span class="form-label">目的地城市</span>
                 </template>
-                <a-input
-                  v-model:value="formData.city"
-                  placeholder="例如: 北京"
+                <a-cascader
+                  v-model:value="formData.city_codes"
+                  :options="cityOptions"
+                  :show-search="citySearchConfig"
+                  change-on-select
+                  placeholder="输入省份或城市搜索"
                   size="large"
-                  class="custom-input"
+                  class="custom-cascader"
+                  allow-clear
                 >
-                  <template #prefix>
-                    <span style="color: #1890ff;">🏙️</span>
+                  <template #suffixIcon>
+                    <span class="city-picker-icon" aria-hidden="true">🏙️</span>
                   </template>
-                </a-input>
+                </a-cascader>
               </a-form-item>
             </a-col>
             <a-col :span="6">
@@ -211,6 +215,7 @@ import { reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { createTripTask } from '@/services/api'
+import regionSource from '@/pc-code/pc-code.json'
 import type { TripFormData } from '@/types'
 import type { Dayjs } from 'dayjs'
 
@@ -221,13 +226,53 @@ const loadingStatus = ref('')
 // 网络失败后保留同一个幂等键，用户重试不会创建第二个后台任务。
 const pendingIdempotencyKey = ref<string | null>(null)
 
-type TripFormState = Omit<TripFormData, 'start_date' | 'end_date'> & {
+interface RegionNode {
+  code: string
+  name: string
+  children?: RegionNode[]
+}
+
+interface CityCascaderOption {
+  value: string
+  label: string
+  children?: CityCascaderOption[]
+}
+
+type TripFormState = Omit<TripFormData, 'city' | 'start_date' | 'end_date'> & {
+  city_codes: string[]
   start_date: Dayjs | null
   end_date: Dayjs | null
 }
 
+const municipalityCodes = new Set(['11', '12', '31', '50'])
+const cityNameByCode = new Map<string, string>()
+
+const toCityOption = (region: RegionNode, isRoot = false): CityCascaderOption => {
+  cityNameByCode.set(region.code, region.name)
+
+  const children = isRoot && municipalityCodes.has(region.code)
+    ? undefined
+    : region.children?.map((child) => toCityOption(child))
+
+  return {
+    value: region.code,
+    label: region.name,
+    ...(children?.length ? { children } : {})
+  }
+}
+
+const cityOptions = (regionSource as RegionNode[]).map((region) => toCityOption(region, true))
+const citySearchConfig = {
+  filter: (inputValue: string, path: CityCascaderOption[]) => {
+    const keyword = inputValue.trim().toLowerCase()
+    return path.some((option) => (
+      option.label.toLowerCase().includes(keyword) || option.value.includes(keyword)
+    ))
+  }
+}
+
 const formData = reactive<TripFormState>({
-  city: '',
+  city_codes: [],
   start_date: null,
   end_date: null,
   travel_days: 1,
@@ -259,13 +304,20 @@ const handleSubmit = async () => {
     return
   }
 
+  const selectedCityCode = formData.city_codes[formData.city_codes.length - 1]
+  const selectedCityName = selectedCityCode ? cityNameByCode.get(selectedCityCode) : undefined
+  if (!selectedCityName) {
+    message.error('请选择有效的目的地城市')
+    return
+  }
+
   loading.value = true
   loadingProgress.value = 35
   loadingStatus.value = '正在创建可恢复的后台任务...'
 
   try {
     const requestData: TripFormData = {
-      city: formData.city,
+      city: selectedCityName,
       start_date: formData.start_date.format('YYYY-MM-DD'),
       end_date: formData.end_date.format('YYYY-MM-DD'),
       travel_days: formData.travel_days,
@@ -498,6 +550,30 @@ const handleSubmit = async () => {
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
 }
 
+.custom-cascader {
+  width: 100%;
+}
+
+.custom-cascader :deep(.ant-select-selector) {
+  border: 2px solid #e8e8e8 !important;
+  border-radius: 12px !important;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease !important;
+}
+
+.custom-cascader:hover :deep(.ant-select-selector),
+.custom-cascader.ant-select-focused :deep(.ant-select-selector) {
+  border-color: #667eea !important;
+}
+
+.custom-cascader.ant-select-focused :deep(.ant-select-selector) {
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+}
+
+.city-picker-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 16px;
+}
 /* 天数显示 - 紧凑版 */
 .days-display-compact {
   display: flex;
