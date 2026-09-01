@@ -12,7 +12,7 @@
       <div class="icon-wrapper">
         <span class="icon">✈️</span>
       </div>
-      <h1 class="page-title">智能旅行助手</h1>
+      <h1 class="page-title">智能旅行家</h1>
       <p class="page-subtitle">基于AI的个性化旅行规划,让每一次出行都完美无忧</p>
       <a-button ghost size="large" class="history-entry" @click="router.push('/history')">
         🗂️ 查看历史行程

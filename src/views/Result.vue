@@ -25,9 +25,9 @@
         >
           🌍 分享行程
         </a-button>
-        <a-button v-if="tripPlan && !editMode" @click="toggleEditMode" type="default">
+        <!-- <a-button v-if="tripPlan && !editMode" @click="toggleEditMode" type="default">
           ✏️ 编辑行程
-        </a-button>
+        </a-button> -->
         <a-button v-else @click="saveChanges" type="primary" :loading="savingDraft">
           💾 保存并重新评估
         </a-button>
@@ -210,7 +210,7 @@
         </div>
 
         <!-- 可执行行程闭环：全部来自后端轻量 execution-view。 -->
-        <template v-if="executionView">
+        <section v-if="executionView" class="execution-suite" aria-label="行程执行信息">
           <RouteSegments
             :segments="executionView.route_segments"
             :summary="executionView.route_summary"
@@ -223,7 +223,7 @@
             :commute="executionView.commute_report"
             :constraint="executionView.constraint_report"
           /> -->
-        </template>
+        </section>
 
         <!-- 每日行程:可折叠 -->
         <a-card title="📅 每日行程" :bordered="false" class="days-card">
@@ -1453,6 +1453,17 @@ const addAttractionMarkers = (AMap: any) => {
   flex: 1;
   min-width: 0;
 }
+.execution-suite {
+  --execution-header: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --execution-surface: #ffffff;
+  --execution-border: #e8e8f2;
+  --execution-radius: 12px;
+  --execution-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --execution-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.12);
+  display: grid;
+  gap: 20px;
+  margin-bottom: 20px;
+}
 
 /* 景点图片样式 */
 .attraction-image-wrapper {
@@ -1977,5 +1988,4 @@ const addAttractionMarkers = (AMap: any) => {
   }
 }
 </style>
-
 
