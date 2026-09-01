@@ -28,7 +28,7 @@ import type {
 } from '@/types'
 import { getAccessToken, notifyUnauthorized, setAuthSession } from '@/utils/auth'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.126.192.26:8000'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -123,7 +123,7 @@ export async function generateTripPlan(formData: TripFormData): Promise<TripPlan
   }
 }
 
-/** 使用统一的 API 客户端查询景点图片，避免硬编码 localhost。 */
+/** 使用统一的 API 客户端查询景点图片，避免硬编码 10.126.192.26。 */
 export async function getAttractionPhoto(name: string): Promise<PoiPhotoResponse> {
   try {
     const response = await apiClient.get<PoiPhotoResponse>('/api/poi/photo', {
