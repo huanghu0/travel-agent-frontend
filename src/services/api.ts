@@ -389,7 +389,7 @@ export async function createTripTask(
   try {
     const response = await apiClient.post<TripTaskCreateResponse>('/api/trip/tasks', formData, {
       headers: { 'Idempotency-Key': idempotencyKey },
-      timeout: 15000
+      timeout: 1200000
     })
     return response.data
   } catch (error: unknown) {
@@ -401,7 +401,7 @@ export async function createTripTask(
 export async function getTripTask(taskId: string): Promise<TripPlanningTask> {
   try {
     const response = await apiClient.get<TripPlanningTask>(`/api/trip/tasks/${taskId}`, {
-      timeout: 15000
+      timeout: 1200000
     })
     return response.data
   } catch (error: unknown) {
@@ -415,7 +415,7 @@ export async function cancelTripTask(taskId: string): Promise<TripTaskCancelResp
     const response = await apiClient.post<TripTaskCancelResponse>(
       `/api/trip/tasks/${taskId}/cancel`,
       undefined,
-      { timeout: 15000 }
+      { timeout: 1200000 }
     )
     return response.data
   } catch (error: unknown) {
