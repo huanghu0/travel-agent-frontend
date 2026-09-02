@@ -28,7 +28,10 @@ import type {
 } from '@/types'
 import { getAccessToken, notifyUnauthorized, setAuthSession } from '@/utils/auth'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://10.126.192.26:8000'
+// 生产环境使用当前应用二级目录，由 Nginx 将其中的 /api 请求转发至后端。
+// 本地开发可通过 VITE_API_BASE_URL 覆盖，未配置时沿用 Vite 的 base。
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.BASE_URL || '/')
+  .replace(/\/+$/, '')
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -435,7 +438,8 @@ interface TripTaskStreamHandlers {
 
 /** 构建 SSE 地址；Token 只放 Authorization 请求头，禁止写入 URL。 */
 export function getTripTaskEventsUrl(taskId: string, afterEventId = 0): string {
-  const url = new URL(`/api/trip/tasks/${taskId}/events`, API_BASE_URL)
+  const apiPath = `${API_BASE_URL}/api/trip/tasks/${encodeURIComponent(taskId)}/events`
+  const url = new URL(apiPath, window.location.origin)
   if (afterEventId > 0) url.searchParams.set('after_event_id', String(afterEventId))
   return url.toString()
 }

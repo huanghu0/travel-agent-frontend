@@ -12,7 +12,8 @@ import SharedGuides from './views/SharedGuides.vue'
 import { AUTH_UNAUTHORIZED_EVENT, getAccessToken } from '@/utils/auth'
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 与 Vite 的 base 保持一致，确保 history 路由能在二级目录下正常刷新。
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
